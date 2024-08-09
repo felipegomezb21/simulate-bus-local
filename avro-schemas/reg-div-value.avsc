@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "name": "reg-div-value",
+  "fields": [
+    {
+      "name": "id",
+      "type": "int"
+    },
+    {
+      "name": "nombre",
+      "type": "string"
+    }
+  ]
+}

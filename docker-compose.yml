@@ -1,0 +1,215 @@
+services:
+
+# Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    healthcheck:
+      test: "echo stat | nc localhost $$ZOOKEEPER_CLIENT_PORT"
+    networks:
+      - network-streams
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'  # Enable auto topic creation
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "9092" ]
+    networks:
+      - network-streams
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2048M
+        reservations:
+          cpus: '0.5'
+          memory: 1024M
+
+# Kafka setup
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka-setup
+    depends_on:
+      - kafka
+      - apicurio-schema-registry
+      - postgres
+      - zookeeper
+      - kafka-connect
+      - kafka-ui
+    volumes:
+      - ./setup-commands/create-kafka-topics.sh:/create-kafka-topics.sh
+      - ./setup-commands/create-schemas-apicurio.sh:/create-schemas-apicurio.sh
+      - ./setup-commands/setup-commands.sh:/setup-commands.sh
+      - ./setup-commands/create-connectors.sh:/create-connectors.sh
+      - ./avro-schemas:/avro-schemas
+      - ./connectors:/connectors
+    entrypoint: ["/bin/sh", "-c", "/setup-commands.sh"]
+    networks:
+      - network-streams
+
+    
+# Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+      - zookeeper
+      - kafka-connect
+      - apicurio-schema-registry
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_SCHEMA_REGISTRY: http://apicurio-schema-registry:8080/apis/ccompat/v6
+      KAFKA_CLUSTERS_0_SECURITY_PROTOCOL: PLAINTEXT
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: Kafka Connect 
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083/
+    healthcheck:
+      test: "curl -f http://localhost:8080 || exit 1"
+    networks:
+      - network-streams
+
+# Apicurio Schema Registry
+  apicurio-schema-registry:
+    image: apicurio/apicurio-registry-mem:latest-snapshot
+    container_name: apicurio-schema-registry
+    restart: unless-stopped
+    environment:
+      QUARKUS_PROFILE: prod
+      REGISTRY_STORAGE: mem
+      AUTH_ENABLED: "false"
+      #APICURIO_CCOMPAT_LEGACY-ID-MODE_ENABLED: "true"  # Enable Legacy ID mode (compatibility API)
+    ports:
+      - "8082:8080"
+    networks:
+      - network-streams
+
+# kafka connect
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:latest
+    container_name: kafka-connect
+    restart: unless-stopped
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'kafka-connect'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_INTERNAL_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_INTERNAL_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'kafka-connect'
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/etc/kafka-connect/plugins"
+    volumes:
+      - ./kafka-connect-plugins:/etc/kafka-connect/plugins  # Mount local plugins directory 
+    ports:
+      - "8083:8083"
+    depends_on:
+      - kafka
+    networks:
+      - network-streams
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1024M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+# PostgreSQL
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql # Init script to create tables and data example
+    ports:
+      - "5432:5432"
+    networks:
+      - network-streams
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+
+# # Redis
+#   redis:
+#     image: redis:latest
+#     container_name: redis
+#     ports:
+#       - "6379:6379"
+#     healthcheck:
+#       test: ["CMD", "redis-cli", "ping"]
+#       interval: 1s
+#       timeout: 3s
+#       retries: 30
+#     networks:
+#       - network-streams
+
+
+# # Application 1
+#   producer-app:
+#     build:
+#       context: ./spring-aplications/producer
+#       dockerfile: Dockerfile
+#     container_name: producer-app
+#     restart: unless-stopped
+#     environment:
+#       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+#       SPRING_DATA_REDIS_HOST: redis
+#       SPRING_DATA_REDIS_PORT: 6379
+#     ports:
+#       - "8082:8082"
+#     depends_on:
+#       - kafka
+#       - redis
+#     networks:
+#       - network-streams
+#     deploy:
+#       resources:
+#         limits:
+#           cpus: '0.5'
+#           memory: 512M
+#         reservations:
+#           cpus: '0.25'
+#           memory: 256M
+    
+
+networks:
+  network-streams:
+    driver: bridge

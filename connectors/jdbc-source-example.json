@@ -1,0 +1,19 @@
+{
+  "name": "jdbc-source-example",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "tasks.max": "1",
+    "connection.url": "jdbc:postgresql://postgres:5432/mydatabase",
+    "connection.user": "myuser",
+    "connection.password": "mypassword",
+    "table.whitelist": "employees",
+    "mode": "incrementing",
+    "incrementing.column.name": "id",
+    "topic.prefix": "example-topic-",
+    
+    "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",
+    "value.converter.apicurio.registry.url": "http://apicurio-schema-registry:8080/apis/registry/v2",
+    "value.converter.apicurio.registry.global-id": "io.apicurio.registry.utils.serde.strategy.GetOrCreateIdStrategy",
+    "value.converter.apicurio.registry.auto-register": true
+  }
+}
